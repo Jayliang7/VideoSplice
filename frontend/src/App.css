@@ -1,0 +1,86 @@
+/* App.css — clean, centered, no Tailwind */
+body {
+  margin: 0;
+  padding: 0;
+  background-color: #0f0f0f;
+  color: #ffffff;
+  font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  height: 100vh;
+}
+
+.app-container {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 24px;
+  padding: 32px;
+  max-width: 500px;
+  width: 100%;
+  text-align: center;
+  border-radius: 12px;
+  background-color: #1f1f1f;
+  box-shadow: 0 0 20px rgba(0,0,0,0.4);
+}
+
+h1 {
+  font-size: 2rem;
+  margin-bottom: 12px;
+  color: #e2e8f0;
+}
+
+label {
+  padding: 16px 32px;
+  background-color: #2563eb;
+  border-radius: 10px;
+  color: white;
+  font-weight: 600;
+  font-size: 1rem;
+  cursor: pointer;
+  transition: background-color 0.2s ease;
+}
+
+label:hover {
+  background-color: #1d4ed8;
+}
+
+input[type="file"] {
+  display: none;
+}
+
+button {
+  padding: 12px 24px;
+  background-color: #22c55e;
+  color: white;
+  border: none;
+  font-weight: bold;
+  border-radius: 8px;
+  cursor: pointer;
+  transition: background-color 0.2s ease;
+}
+
+button:disabled {
+  background-color: #6b7280;
+  cursor: not-allowed;
+}
+
+.status-msg {
+  font-size: 1rem;
+  font-weight: 500;
+  margin-top: 8px;
+}
+
+.status-success {
+  color: #4ade80;
+}
+.status-error {
+  color: #f87171;
+}
+.status-processing {
+  color: #facc15;
+}
+.status-uploading {
+  color: #60a5fa;
+}
