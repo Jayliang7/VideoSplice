@@ -2,12 +2,15 @@ import { useCallback, useEffect, useState } from "react";
 
 import './App.css';
 
+
 export default function App() {
   const [hover, setHover] = useState(false);
   const [files, setFiles] = useState([]);
   const [jobId, setJobId] = useState(null);
   const [status, setStatus] = useState("idle"); // idle | ready | uploading | processing | success | error
   const [message, setMessage] = useState("");
+
+  const API_BASE = "https://videosplice.onrender.com";
 
   const handleBrowse = (e) => {
     const picked = Array.from(e.target.files || []).filter((f) => f.type.startsWith("video/"));
@@ -25,7 +28,7 @@ export default function App() {
       const form = new FormData();
       form.append("file", files[0]);
 
-      const res = await fetch("http://localhost:8000/api/upload", {
+      const res = await fetch(`${API_BASE}/api/upload`, {
         method: "POST",
         body: form,
       });
@@ -46,7 +49,7 @@ export default function App() {
     if (!jobId || status !== "processing") return;
     const interval = setInterval(async () => {
       try {
-        const res = await fetch(`http://localhost:8000/api/status/${jobId}`);
+        const res = await fetch(`${API_BASE}/api/status/${jobId}`);
         if (!res.ok) throw new Error("Status check failed");
         const data = await res.json();
 
@@ -54,7 +57,7 @@ export default function App() {
           setStatus("success");
           setMessage("Processing complete! Downloading...");
 
-          const downloadUrl = `http://localhost:8000/api/download/${jobId}`;
+          const downloadUrl = `${API_BASE}/api/download/${jobId}`;
           const anchor = document.createElement("a");
           anchor.href = downloadUrl;
           anchor.download = `${jobId}.zip`;
