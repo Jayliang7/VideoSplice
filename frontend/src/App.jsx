@@ -47,10 +47,31 @@ export default function App() {
 
   useEffect(() => {
     if (!jobId || status !== "processing") return;
+    
+    let consecutiveErrors = 0;
+    const maxConsecutiveErrors = 5; // Allow up to 5 consecutive errors before giving up
+    
     const interval = setInterval(async () => {
       try {
-        const res = await fetch(`${API_BASE}/api/status/${jobId}`);
-        if (!res.ok) throw new Error("Status check failed");
+        const res = await fetch(`${API_BASE}/api/status/${jobId}`, {
+          method: 'GET',
+          headers: {
+            'Accept': 'application/json',
+          },
+        });
+        
+        if (!res.ok) {
+          consecutiveErrors++;
+          console.warn(`Status check failed (attempt ${consecutiveErrors}/${maxConsecutiveErrors}): ${res.status} ${res.statusText}`);
+          
+          if (consecutiveErrors >= maxConsecutiveErrors) {
+            throw new Error(`Status check failed after ${maxConsecutiveErrors} attempts`);
+          }
+          return; // Continue polling on next interval
+        }
+        
+        // Reset error counter on success
+        consecutiveErrors = 0;
         const data = await res.json();
 
         if (data.state === "done") {
@@ -71,14 +92,23 @@ export default function App() {
           setStatus("error");
           setMessage("Processing failed.");
           clearInterval(interval);
+        } else {
+          // Still processing, update message with progress
+          setMessage(`Processing... (${data.state})`);
         }
       } catch (err) {
-        console.error(err);
-        setStatus("error");
-        setMessage("Could not check status.");
-        clearInterval(interval);
+        consecutiveErrors++;
+        console.error(`Status check error (attempt ${consecutiveErrors}/${maxConsecutiveErrors}):`, err);
+        
+        if (consecutiveErrors >= maxConsecutiveErrors) {
+          setStatus("error");
+          setMessage("Could not check status after multiple attempts. Please refresh and try again.");
+          clearInterval(interval);
+        }
+        // Continue polling on next interval if under max errors
       }
-    }, 2000);
+    }, 3000); // Increased to 3 seconds to reduce load
+    
     return () => clearInterval(interval);
   }, [jobId, status]);
 

@@ -51,6 +51,7 @@ app.add_middleware(
     allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],
     allow_headers=["*"],
     expose_headers=["Content-Disposition"],
+    max_age=86400,  # Cache preflight requests for 24 hours
 )
 
 # ---------------------------------------------------------------------------
@@ -76,6 +77,11 @@ def health_check():
     """Health check endpoint for Render."""
     return {"status": "healthy", "jobs_count": len(JOBS)}
 
+@app.options("/api/status/{job_id}")
+def status_options(job_id: str):
+    """Handle OPTIONS requests for CORS preflight."""
+    return {"message": "OK"}
+
 @app.post("/api/upload", response_model=dict[str, str])
 async def upload_video(background_tasks: BackgroundTasks, file: UploadFile = File(...)):
     """Receive a video file and kick off pipeline processing in background."""
@@ -100,14 +106,24 @@ async def upload_video(background_tasks: BackgroundTasks, file: UploadFile = Fil
 @app.get("/api/status/{job_id}")
 def get_status(job_id: str):
     """Return processing state: processing | done | error."""
-    logger.info(f"Status check for job_id: {job_id}")
     try:
         job = JOBS.get(job_id)
         if not job:
             logger.warning(f"Job not found: {job_id}")
             raise HTTPException(404, detail="job not found")
-        logger.info(f"Job {job_id} state: {job['state']}")
+        
+        # Only log every 10th request to reduce log spam
+        if job_id not in getattr(get_status, '_request_count', {}):
+            get_status._request_count = {}
+        get_status._request_count[job_id] = get_status._request_count.get(job_id, 0) + 1
+        
+        if get_status._request_count[job_id] % 10 == 0:
+            logger.info(f"Job {job_id} state: {job['state']} (request #{get_status._request_count[job_id]})")
+        
         return {"state": job["state"], "error": job["error"]}
+    except HTTPException:
+        # Re-raise HTTP exceptions as-is
+        raise
     except Exception as e:
         # Log the error for debugging
         logger.error(f"Error in status endpoint for job {job_id}: {str(e)}")
@@ -147,14 +163,26 @@ def _process_video(job_id: str, video_path: Path):
 
     logger.info(f"Starting video processing for job {job_id}, video: {video_path}")
     
-    from backend.video_pipeline.pipeline import run  # local import to avoid startup cost
-
     try:
+        # Check if video file exists
+        if not video_path.exists():
+            raise FileNotFoundError(f"Video file not found: {video_path}")
+        
+        # Check file size
+        file_size = video_path.stat().st_size
+        if file_size == 0:
+            raise ValueError("Video file is empty")
+        
+        logger.info(f"Video file size: {file_size} bytes")
+        
+        from backend.video_pipeline.pipeline import run  # local import to avoid startup cost
+
         # use job_id as a prefix so each run dir is unique and traceable
         run_dir = run(video_path, prefix=job_id)
         JOBS[job_id].update(state="done", run_dir=run_dir)
         logger.info(f"Video processing completed for job {job_id}, run_dir: {run_dir}")
+        
     except Exception as exc:  # pragma: no cover – broad for MVP
         logger.error(f"Video processing failed for job {job_id}: {str(exc)}")
         JOBS[job_id].update(state="error", error=str(exc))
-        raise
+        # Don't re-raise to prevent the background task from failing
