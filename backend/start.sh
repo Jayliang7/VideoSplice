@@ -8,5 +8,8 @@ mkdir -p ../data/uploads
 mkdir -p outputs
 mkdir -p runs
 
-# NOTE: app.py lives in backend/, so we import it as backend.app
-exec uvicorn app:app --host 0.0.0.0 --port "$PORT" --workers 1
+# Set Python path to include the current directory
+export PYTHONPATH="${PYTHONPATH}:$(pwd)"
+
+# Start the application
+exec uvicorn backend.app:app --host 0.0.0.0 --port "$PORT" --workers 1

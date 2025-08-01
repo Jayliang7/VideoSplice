@@ -55,6 +55,12 @@ python test_api.py
 3. The backend will be available at `https://videosplice.onrender.com`
 4. The frontend will be available at `https://videosplicesite.onrender.com`
 
+### Deployment Configuration
+
+- The backend runs from the `backend/` directory
+- Uses `python -m uvicorn app:app` to start the FastAPI server
+- Health check endpoint: `/health`
+
 ## Troubleshooting
 
 ### 502 Bad Gateway
