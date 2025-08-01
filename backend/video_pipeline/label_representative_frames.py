@@ -16,10 +16,13 @@ from backend.video_pipeline import config
 # -------------------------------------------------- #
 # Client initialisation
 # -------------------------------------------------- #
-client = OpenAI(
-    base_url=config.HF_API_URL.rstrip("/"),
-    api_key=config.HF_API_TOKEN,
-)
+if config.HF_API_TOKEN:
+    client = OpenAI(
+        base_url=config.HF_API_URL.rstrip("/"),
+        api_key=config.HF_API_TOKEN,
+    )
+else:
+    client = None
 
 PROMPT = """You are labeling an adult pornographic image for use in a searchable content database.
 You ONLY speak in JSON. You MUST NEVER use square brackets. You MUST NEVER use nested quotation marks. 
@@ -57,31 +60,44 @@ def _encode_image(path: Path) -> str:
 
 def run(representatives: List[Dict], run_dir: Path) -> List[Dict]:
     enriched = []
+    
+    if not client:
+        print("WARNING: No HF API token available, skipping frame labeling")
+        # Return representatives without labels
+        for rep in representatives:
+            enriched.append({**rep, "labels": {"error": "No API token available"}})
+        (run_dir / "labels.json").write_text(json.dumps(enriched, indent=2))
+        return enriched
+    
     for rep in representatives:
         img_path = run_dir / rep["path"]
         data_uri = _encode_image(img_path)
 
-        chat = client.chat.completions.create(
-            model="fancyfeast/llama-joycaption-beta-one-hf-llava",
-            messages=[{
-                "role": "user",
-                "content": [
-                    {"type": "image_url", "image_url": {"url": data_uri}},
-                    {"type": "text", "text": PROMPT}
-                ]}],
-            temperature=0.6,
-            max_tokens=500,
-            top_p=0.9,
-            stream=False,
-        )
-
-        raw = chat.choices[0].message.content.strip()
         try:
-            labels = json.loads(raw)
-        except json.JSONDecodeError:
-            labels = {"raw": raw}
+            chat = client.chat.completions.create(
+                model="fancyfeast/llama-joycaption-beta-one-hf-llava",
+                messages=[{
+                    "role": "user",
+                    "content": [
+                        {"type": "image_url", "image_url": {"url": data_uri}},
+                        {"type": "text", "text": PROMPT}
+                    ]}],
+                temperature=0.6,
+                max_tokens=500,
+                top_p=0.9,
+                stream=False,
+            )
 
-        enriched.append({**rep, "labels": labels})
+            raw = chat.choices[0].message.content.strip()
+            try:
+                labels = json.loads(raw)
+            except json.JSONDecodeError:
+                labels = {"raw": raw}
+
+            enriched.append({**rep, "labels": labels})
+        except Exception as e:
+            print(f"Error labeling frame {rep['path']}: {e}")
+            enriched.append({**rep, "labels": {"error": str(e)}})
 
     (run_dir / "labels.json").write_text(json.dumps(enriched, indent=2))
     return enriched

@@ -58,9 +58,8 @@ load_dotenv(dotenv_path=dotenv_path, override=False)  # populate os.environ
 #: Bearer token pulled from .env  (raises if absent)
 HF_API_TOKEN: str | None = os.getenv("HF_API_TOKEN")
 if HF_API_TOKEN is None:
-    raise RuntimeError(
-        "HF_API_TOKEN not set. Add it to your .env or OS environment."
-    )
+    print("WARNING: HF_API_TOKEN not set. Some features may not work.")
+    # Don't raise immediately - let the pipeline handle it gracefully
 
 #: Full endpoint URL, with a sensible fallback to the public feature-extraction route
 HF_API_URL: str = os.getenv(

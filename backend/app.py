@@ -22,9 +22,14 @@ import os
 import shutil
 import zipfile
 
+import logging
 from fastapi import BackgroundTasks, FastAPI, File, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
+
+# Configure logging
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------
 # App setup & CORS
@@ -34,14 +39,18 @@ app = FastAPI(title="VideoSplice API", version="0.1.0")
 
 origins = [
     "https://videosplicesite.onrender.com",   # your static‐site URL
+    "https://videosplice.onrender.com",       # your API URL
+    "http://localhost:5173",                  # local development
+    "http://localhost:3000",                  # alternative local dev port
 ]
 
 app.add_middleware(
     CORSMiddleware,
     allow_origins=origins,        # exact origins
     allow_credentials=True,
-    allow_methods=["*"],
+    allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],
     allow_headers=["*"],
+    expose_headers=["Content-Disposition"],
 )
 
 # ---------------------------------------------------------------------------
@@ -60,12 +69,19 @@ UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
 
 @app.get("/", include_in_schema=False)
 def root():
-    return {"status": "ok"}
+    return {"status": "ok", "message": "VideoSplice API is running"}
+
+@app.get("/health", include_in_schema=False)
+def health_check():
+    """Health check endpoint for Render."""
+    return {"status": "healthy", "jobs_count": len(JOBS)}
 
 @app.post("/api/upload", response_model=dict[str, str])
 async def upload_video(background_tasks: BackgroundTasks, file: UploadFile = File(...)):
     """Receive a video file and kick off pipeline processing in background."""
 
+    logger.info(f"Received upload request for file: {file.filename}")
+    
     job_id = str(uuid4())
     temp_path = UPLOAD_DIR / f"{job_id}_{file.filename}"
 
@@ -73,6 +89,8 @@ async def upload_video(background_tasks: BackgroundTasks, file: UploadFile = Fil
     with temp_path.open("wb") as out:
         shutil.copyfileobj(file.file, out)
 
+    logger.info(f"File saved to {temp_path}, job_id: {job_id}")
+    
     JOBS[job_id] = {"state": "processing", "run_dir": None, "error": None}
     background_tasks.add_task(_process_video, job_id, temp_path)
 
@@ -82,10 +100,18 @@ async def upload_video(background_tasks: BackgroundTasks, file: UploadFile = Fil
 @app.get("/api/status/{job_id}")
 def get_status(job_id: str):
     """Return processing state: processing | done | error."""
-    job = JOBS.get(job_id)
-    if not job:
-        raise HTTPException(404, detail="job not found")
-    return {"state": job["state"], "error": job["error"]}
+    logger.info(f"Status check for job_id: {job_id}")
+    try:
+        job = JOBS.get(job_id)
+        if not job:
+            logger.warning(f"Job not found: {job_id}")
+            raise HTTPException(404, detail="job not found")
+        logger.info(f"Job {job_id} state: {job['state']}")
+        return {"state": job["state"], "error": job["error"]}
+    except Exception as e:
+        # Log the error for debugging
+        logger.error(f"Error in status endpoint for job {job_id}: {str(e)}")
+        raise HTTPException(500, detail=f"Internal server error: {str(e)}")
 
 
 @app.get("/api/download/{job_id}")
@@ -119,12 +145,16 @@ def download_zip(job_id: str):
 def _process_video(job_id: str, video_path: Path):
     """Run the heavy pipeline in the background thread."""
 
+    logger.info(f"Starting video processing for job {job_id}, video: {video_path}")
+    
     from backend.video_pipeline.pipeline import run  # local import to avoid startup cost
 
     try:
         # use job_id as a prefix so each run dir is unique and traceable
         run_dir = run(video_path, prefix=job_id)
         JOBS[job_id].update(state="done", run_dir=run_dir)
+        logger.info(f"Video processing completed for job {job_id}, run_dir: {run_dir}")
     except Exception as exc:  # pragma: no cover – broad for MVP
+        logger.error(f"Video processing failed for job {job_id}: {str(exc)}")
         JOBS[job_id].update(state="error", error=str(exc))
         raise
