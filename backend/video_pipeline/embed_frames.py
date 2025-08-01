@@ -53,37 +53,66 @@ def run(frames: List[Dict], run_dir: Path) -> List[Dict]:
     
     try:
         enriched: List[Dict] = []
-
-        for i, meta in enumerate(tqdm(frames, desc="Embedding frames")):
-            try:
-                img_path = run_dir / meta["path"]
-                
-                # Check if image file exists
-                if not img_path.exists():
-                    logger.error(f"Image file not found: {img_path}")
-                    raise FileNotFoundError(f"Image file not found: {img_path}")
-                
-                # Load and convert image
-                image = Image.open(img_path).convert("RGB")
-                
-                # Process with CLIP
-                inputs = _processor(images=image, return_tensors="pt").to(DEVICE)
-
-                with torch.no_grad():
-                    features = _model.get_image_features(**inputs)   # (1, 512)
-
-                # CLIP best practice: L2-normalise so cosine ≈ dot-product
-                embedding = torch.nn.functional.normalize(features, dim=-1)
-                meta_with_emb = {**meta, "embedding": embedding.cpu().squeeze().tolist()}
-                enriched.append(meta_with_emb)
-                
-                # Log progress every 10 frames
-                if (i + 1) % 10 == 0:
-                    logger.info(f"Embedded {i + 1}/{len(frames)} frames")
+        
+        # Import memory monitoring
+        from backend.video_pipeline.config import BATCH_SIZE, check_memory_limit, force_memory_cleanup, get_memory_usage
+        
+        # Process frames in batches for memory efficiency
+        for batch_start in range(0, len(frames), BATCH_SIZE):
+            batch_end = min(batch_start + BATCH_SIZE, len(frames))
+            batch_frames = frames[batch_start:batch_end]
+            
+            logger.info(f"Processing batch {batch_start//BATCH_SIZE + 1}/{(len(frames) + BATCH_SIZE - 1)//BATCH_SIZE} (frames {batch_start+1}-{batch_end})")
+            
+            # Check memory before processing batch
+            memory_info = get_memory_usage()
+            if memory_info["available"]:
+                logger.info(f"Memory before batch: {memory_info['used_mb']:.1f}MB ({memory_info['percent']:.1f}%)")
+            
+            if not check_memory_limit():
+                logger.warning("Memory usage high before batch, forcing cleanup...")
+                force_memory_cleanup()
+            
+            # Process batch
+            for i, meta in enumerate(batch_frames):
+                try:
+                    img_path = run_dir / meta["path"]
                     
-            except Exception as e:
-                logger.error(f"Failed to embed frame {i} ({meta.get('path', 'unknown')}): {str(e)}")
-                raise
+                    # Check if image file exists
+                    if not img_path.exists():
+                        logger.error(f"Image file not found: {img_path}")
+                        raise FileNotFoundError(f"Image file not found: {img_path}")
+                    
+                    # Load and convert image
+                    image = Image.open(img_path).convert("RGB")
+                    
+                    # Process with CLIP
+                    inputs = _processor(images=image, return_tensors="pt").to(DEVICE)
+
+                    with torch.no_grad():
+                        features = _model.get_image_features(**inputs)   # (1, 512)
+
+                    # CLIP best practice: L2-normalise so cosine ≈ dot-product
+                    embedding = torch.nn.functional.normalize(features, dim=-1)
+                    meta_with_emb = {**meta, "embedding": embedding.cpu().squeeze().tolist()}
+                    enriched.append(meta_with_emb)
+                    
+                    # Clear GPU memory if using CUDA
+                    if DEVICE == "cuda":
+                        del features, embedding, inputs
+                        torch.cuda.empty_cache()
+                    
+                except Exception as e:
+                    logger.error(f"Failed to embed frame {batch_start + i} ({meta.get('path', 'unknown')}): {str(e)}")
+                    raise
+            
+            # Check memory after batch
+            memory_info = get_memory_usage()
+            if memory_info["available"]:
+                logger.info(f"Memory after batch: {memory_info['used_mb']:.1f}MB ({memory_info['percent']:.1f}%)")
+            
+            # Force cleanup after each batch
+            force_memory_cleanup()
 
         # Persist once for offline debugging / reuse
         logger.info("Saving embeddings to embeddings.json")

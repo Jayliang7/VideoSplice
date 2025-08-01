@@ -61,11 +61,26 @@ def run(video_path: str | Path, *, prefix: str | None = None, progress_callback=
             except Exception as e:
                 logger.warning(f"Progress callback failed: {e}")
     
+    def check_memory():
+        """Check memory and force cleanup if needed"""
+        from backend.video_pipeline.config import check_memory_limit, force_memory_cleanup, get_memory_usage
+        
+        memory_info = get_memory_usage()
+        if memory_info["available"]:
+            logger.info(f"Memory check: {memory_info['used_mb']:.1f}MB ({memory_info['percent']:.1f}%)")
+        
+        if not check_memory_limit():
+            logger.warning("Memory usage high, forcing cleanup...")
+            force_memory_cleanup()
+            return check_memory_limit()  # Check again after cleanup
+        return True
+    
     try:
         # ------------------------------------------------------------------ #
         # 0. unique workspace
         # ------------------------------------------------------------------ #
         checkpoint("Initializing", "Creating workspace directory")
+        check_memory()  # Check memory before starting
         run_dir = config.new_run_dir(prefix=prefix)
         checkpoint("Workspace created", f"Directory: {run_dir}")
 
@@ -73,6 +88,7 @@ def run(video_path: str | Path, *, prefix: str | None = None, progress_callback=
         # 1. basic video properties
         # ------------------------------------------------------------------ #
         checkpoint("Analyzing video", "Extracting video properties")
+        check_memory()
         props = get_video_props(video_path)
         checkpoint("Video analysis complete", f"Duration: {props.duration}s, FPS: {props.fps}")
 
@@ -80,41 +96,52 @@ def run(video_path: str | Path, *, prefix: str | None = None, progress_callback=
         # 2. frame extraction
         # ------------------------------------------------------------------ #
         checkpoint("Extracting frames", f"Sampling at {config.FRAME_RATE} FPS")
+        check_memory()
         frames = extract_frames(video_path, run_dir)
         checkpoint("Frame extraction complete", f"Extracted {len(frames)} frames")
+        check_memory()  # Check after frame extraction
 
         # ------------------------------------------------------------------ #
-        # 3. local CLIP embeddings
+        # 3. local CLIP embeddings (with batch processing)
         # ------------------------------------------------------------------ #
         checkpoint("Computing embeddings", "Running CLIP model on frames")
+        check_memory()
         embedded_frames = embed_frames(frames, run_dir)
         checkpoint("Embeddings complete", f"Processed {len(embedded_frames)} frames")
+        check_memory()  # Check after embeddings
 
         # ------------------------------------------------------------------ #
         # 4. clustering via UMAP + HDBSCAN
         # ------------------------------------------------------------------ #
         checkpoint("Clustering frames", "Running UMAP + HDBSCAN")
+        check_memory()
         clusters = cluster_frames(embedded_frames, props.duration, run_dir)
         checkpoint("Clustering complete", f"Found {len(clusters)} clusters")
+        check_memory()  # Check after clustering
 
         # ------------------------------------------------------------------ #
         # 5. representative frame selection
         # ------------------------------------------------------------------ #
         checkpoint("Selecting representatives", "Choosing best frames from each cluster")
+        check_memory()
         representatives = choose_reps(embedded_frames, clusters, run_dir)
         checkpoint("Representative selection complete", f"Selected {len(representatives)} representatives")
+        check_memory()  # Check after selection
 
         # ------------------------------------------------------------------ #
         # 6. Hugging Face labeling of representatives
         # ------------------------------------------------------------------ #
         checkpoint("Labeling frames", "Generating descriptions via Hugging Face")
+        check_memory()
         labeled_reps = label_reps(representatives, run_dir)
         checkpoint("Labeling complete", f"Labeled {len(labeled_reps)} frames")
+        check_memory()  # Check after labeling
 
         # ------------------------------------------------------------------ #
         # 7. clip generation centred on reps
         # ------------------------------------------------------------------ #
         checkpoint("Generating clips", "Creating video clips around representatives")
+        check_memory()
         clips = clipper(
             frames=frames,
             clusters=clusters,
@@ -122,11 +149,13 @@ def run(video_path: str | Path, *, prefix: str | None = None, progress_callback=
             run_dir=run_dir,
         )
         checkpoint("Clip generation complete", f"Generated {len(clips)} clips")
+        check_memory()  # Check after clip generation
 
         # ------------------------------------------------------------------ #
         # 8. write consolidated metadata
         # ------------------------------------------------------------------ #
         checkpoint("Writing metadata", "Creating final output files")
+        check_memory()
         write_meta(
             run_dir,
             video_props=dataclasses.asdict(props),
@@ -136,6 +165,7 @@ def run(video_path: str | Path, *, prefix: str | None = None, progress_callback=
             clips=clips,
         )
         checkpoint("Pipeline complete", "All processing finished successfully")
+        check_memory()  # Final memory check
 
         return run_dir
         

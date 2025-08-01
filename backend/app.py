@@ -204,6 +204,13 @@ async def process_video_sync(file: UploadFile = File(...)):
     
     logger.info(f"Received sync processing request for file: {file.filename}")
     
+    # Check memory before starting
+    from backend.video_pipeline.config import check_memory_limit, check_video_size, assert_memory_available, get_memory_usage
+    
+    memory_info = get_memory_usage()
+    if memory_info["available"]:
+        logger.info(f"Memory at start: {memory_info['used_mb']:.1f}MB ({memory_info['percent']:.1f}%)")
+    
     job_id = str(uuid4())
     temp_path = UPLOAD_DIR / f"{job_id}_{file.filename}"
 
@@ -212,7 +219,16 @@ async def process_video_sync(file: UploadFile = File(...)):
         with temp_path.open("wb") as out:
             shutil.copyfileobj(file.file, out)
 
-        logger.info(f"File saved to {temp_path}, job_id: {job_id}")
+        # Check file size after upload
+        file_size = temp_path.stat().st_size
+        if not check_video_size(file_size):
+            raise HTTPException(400, detail=f"Video file too large: {file_size / (1024*1024):.1f}MB > 50MB (Render free plan limit)")
+        
+        logger.info(f"File saved to {temp_path}, job_id: {job_id}, size: {file_size / (1024*1024):.1f}MB")
+        
+        # Check memory before processing
+        if not check_memory_limit():
+            raise HTTPException(503, detail="Server memory limit reached. Please try again later or use a smaller video.")
         
         # Create job entry for tracking
         JOBS[job_id] = {"state": "processing", "run_dir": None, "error": None, "progress": "Starting pipeline..."}
@@ -222,12 +238,19 @@ async def process_video_sync(file: UploadFile = File(...)):
             progress_text = f"{stage}: {message}" if message else stage
             JOBS[job_id].update(progress=progress_text)
             logger.info(f"Job {job_id} progress: {progress_text}")
+            
+            # Check memory during processing
+            if not check_memory_limit():
+                raise MemoryLimitExceededError(get_memory_usage()["used_mb"], 450)
         
         # Process video synchronously with progress tracking
         from backend.video_pipeline.pipeline import run
         
         logger.info(f"Starting synchronous video processing for job {job_id}")
         progress_callback("Initializing", "Starting video processing pipeline")
+        
+        # Assert memory is available before starting
+        assert_memory_available()
         
         run_dir = run(temp_path, prefix=job_id, progress_callback=progress_callback)
         
@@ -243,6 +266,30 @@ async def process_video_sync(file: UploadFile = File(...)):
             "job_id": job_id,
             "download_url": download_url,
             "message": "Video processed successfully"
+        }
+        
+        # Add explicit CORS headers
+        from fastapi.responses import JSONResponse
+        response = JSONResponse(content=response_data)
+        response.headers["Access-Control-Allow-Origin"] = "*"
+        response.headers["Access-Control-Allow-Methods"] = "GET, POST, PUT, DELETE, OPTIONS"
+        response.headers["Access-Control-Allow-Headers"] = "*"
+        
+        return response
+        
+    except MemoryLimitExceededError as exc:
+        error_msg = f"Memory limit exceeded during processing: {str(exc)}"
+        logger.error(error_msg)
+        
+        # Update job status with error
+        if job_id in JOBS:
+            JOBS[job_id].update(state="error", error=str(exc), progress=f"Failed: {str(exc)}")
+        
+        response_data = {
+            "status": "error",
+            "job_id": job_id,
+            "error": str(exc),
+            "message": "Processing failed due to memory limits. Try a smaller video or upgrade to Render Pro."
         }
         
         # Add explicit CORS headers
