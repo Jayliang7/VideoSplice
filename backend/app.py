@@ -214,13 +214,27 @@ async def process_video_sync(file: UploadFile = File(...)):
 
         logger.info(f"File saved to {temp_path}, job_id: {job_id}")
         
-        # Process video synchronously
+        # Create job entry for tracking
+        JOBS[job_id] = {"state": "processing", "run_dir": None, "error": None, "progress": "Starting pipeline..."}
+        
+        # Define progress callback to update job status
+        def progress_callback(stage: str, message: str = ""):
+            progress_text = f"{stage}: {message}" if message else stage
+            JOBS[job_id].update(progress=progress_text)
+            logger.info(f"Job {job_id} progress: {progress_text}")
+        
+        # Process video synchronously with progress tracking
         from backend.video_pipeline.pipeline import run
         
         logger.info(f"Starting synchronous video processing for job {job_id}")
-        run_dir = run(temp_path, prefix=job_id)
+        progress_callback("Initializing", "Starting video processing pipeline")
+        
+        run_dir = run(temp_path, prefix=job_id, progress_callback=progress_callback)
         
         logger.info(f"Video processing completed for job {job_id}, run_dir: {run_dir}")
+        
+        # Update job status
+        JOBS[job_id].update(state="done", run_dir=run_dir, progress="Processing complete")
         
         # Return success with download URL
         download_url = f"/api/download/{job_id}"
@@ -241,7 +255,13 @@ async def process_video_sync(file: UploadFile = File(...)):
         return response
         
     except Exception as exc:
-        logger.error(f"Video processing failed for job {job_id}: {str(exc)}")
+        error_msg = f"Video processing failed for job {job_id}: {str(exc)}"
+        logger.error(error_msg)
+        
+        # Update job status with error
+        if job_id in JOBS:
+            JOBS[job_id].update(state="error", error=str(exc), progress=f"Failed: {str(exc)}")
+        
         response_data = {
             "status": "error",
             "job_id": job_id,
@@ -280,14 +300,19 @@ def _process_video(job_id: str, video_path: Path):
         
         logger.info(f"Video file size: {file_size} bytes")
         
-        # Update job with progress
-        JOBS[job_id].update(progress="Initializing pipeline...")
+        # Define progress callback to update job status
+        def progress_callback(stage: str, message: str = ""):
+            progress_text = f"{stage}: {message}" if message else stage
+            JOBS[job_id].update(progress=progress_text)
+            logger.info(f"Job {job_id} progress: {progress_text}")
+        
+        # Update job with initial progress
+        progress_callback("Initializing", "Starting video processing pipeline")
         
         from backend.video_pipeline.pipeline import run  # local import to avoid startup cost
 
         # use job_id as a prefix so each run dir is unique and traceable
-        JOBS[job_id].update(progress="Running video analysis...")
-        run_dir = run(video_path, prefix=job_id)
+        run_dir = run(video_path, prefix=job_id, progress_callback=progress_callback)
         
         JOBS[job_id].update(state="done", run_dir=run_dir, progress="Processing complete")
         logger.info(f"Video processing completed for job {job_id}, run_dir: {run_dir}")
@@ -295,5 +320,5 @@ def _process_video(job_id: str, video_path: Path):
     except Exception as exc:  # pragma: no cover – broad for MVP
         error_msg = f"Video processing failed for job {job_id}: {str(exc)}"
         logger.error(error_msg)
-        JOBS[job_id].update(state="error", error=str(exc), progress="Processing failed")
+        JOBS[job_id].update(state="error", error=str(exc), progress=f"Failed: {str(exc)}")
         # Don't re-raise to prevent the background task from failing

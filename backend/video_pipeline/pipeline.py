@@ -17,6 +17,7 @@ from __future__ import annotations
 
 from pathlib import Path
 import dataclasses
+import logging
 
 from backend.video_pipeline import config
 from backend.video_pipeline.video_io import get_video_props
@@ -28,8 +29,10 @@ from backend.video_pipeline.label_representative_frames import run as label_reps
 from backend.video_pipeline.clipper import run as clipper
 from backend.video_pipeline.metadata_writer import write as write_meta
 
+# Configure logging
+logger = logging.getLogger(__name__)
 
-def run(video_path: str | Path, *, prefix: str | None = None) -> Path:
+def run(video_path: str | Path, *, prefix: str | None = None, progress_callback=None) -> Path:
     """
     Execute the full pipeline and return the run directory containing all outputs.
 
@@ -38,67 +41,106 @@ def run(video_path: str | Path, *, prefix: str | None = None) -> Path:
     video_path : str | Path
         Path to the source video.
     prefix     : Optional prefix for the run directory name.
+    progress_callback : Optional callback function to report progress
 
     Returns
     -------
     Path
         Absolute path to the run directory (ready for zipping or further use).
     """
-    # ------------------------------------------------------------------ #
-    # 0. unique workspace
-    # ------------------------------------------------------------------ #
-    run_dir = config.new_run_dir(prefix=prefix)
+    
+    def checkpoint(stage: str, message: str = ""):
+        """Send progress update if callback is provided"""
+        full_message = f"Pipeline: {stage}"
+        if message:
+            full_message += f" - {message}"
+        logger.info(full_message)
+        if progress_callback:
+            try:
+                progress_callback(stage, message)
+            except Exception as e:
+                logger.warning(f"Progress callback failed: {e}")
+    
+    try:
+        # ------------------------------------------------------------------ #
+        # 0. unique workspace
+        # ------------------------------------------------------------------ #
+        checkpoint("Initializing", "Creating workspace directory")
+        run_dir = config.new_run_dir(prefix=prefix)
+        checkpoint("Workspace created", f"Directory: {run_dir}")
 
-    # ------------------------------------------------------------------ #
-    # 1. basic video properties
-    # ------------------------------------------------------------------ #
-    props = get_video_props(video_path)
+        # ------------------------------------------------------------------ #
+        # 1. basic video properties
+        # ------------------------------------------------------------------ #
+        checkpoint("Analyzing video", "Extracting video properties")
+        props = get_video_props(video_path)
+        checkpoint("Video analysis complete", f"Duration: {props.duration}s, FPS: {props.fps}")
 
-    # ------------------------------------------------------------------ #
-    # 2. frame extraction
-    # ------------------------------------------------------------------ #
-    frames = extract_frames(video_path, run_dir)
+        # ------------------------------------------------------------------ #
+        # 2. frame extraction
+        # ------------------------------------------------------------------ #
+        checkpoint("Extracting frames", f"Sampling at {config.FRAME_RATE} FPS")
+        frames = extract_frames(video_path, run_dir)
+        checkpoint("Frame extraction complete", f"Extracted {len(frames)} frames")
 
-    # ------------------------------------------------------------------ #
-    # 3. local CLIP embeddings
-    # ------------------------------------------------------------------ #
-    embedded_frames = embed_frames(frames, run_dir)
+        # ------------------------------------------------------------------ #
+        # 3. local CLIP embeddings
+        # ------------------------------------------------------------------ #
+        checkpoint("Computing embeddings", "Running CLIP model on frames")
+        embedded_frames = embed_frames(frames, run_dir)
+        checkpoint("Embeddings complete", f"Processed {len(embedded_frames)} frames")
 
-    # ------------------------------------------------------------------ #
-    # 4. clustering via UMAP + HDBSCAN
-    # ------------------------------------------------------------------ #
-    clusters = cluster_frames(embedded_frames, props.duration, run_dir)
+        # ------------------------------------------------------------------ #
+        # 4. clustering via UMAP + HDBSCAN
+        # ------------------------------------------------------------------ #
+        checkpoint("Clustering frames", "Running UMAP + HDBSCAN")
+        clusters = cluster_frames(embedded_frames, props.duration, run_dir)
+        checkpoint("Clustering complete", f"Found {len(clusters)} clusters")
 
-    # ------------------------------------------------------------------ #
-    # 5. representative frame selection
-    # ------------------------------------------------------------------ #
-    representatives = choose_reps(embedded_frames, clusters, run_dir)
+        # ------------------------------------------------------------------ #
+        # 5. representative frame selection
+        # ------------------------------------------------------------------ #
+        checkpoint("Selecting representatives", "Choosing best frames from each cluster")
+        representatives = choose_reps(embedded_frames, clusters, run_dir)
+        checkpoint("Representative selection complete", f"Selected {len(representatives)} representatives")
 
-    # ------------------------------------------------------------------ #
-    # 6. Hugging Face labeling of representatives
-    # ------------------------------------------------------------------ #
-    labeled_reps = label_reps(representatives, run_dir)
+        # ------------------------------------------------------------------ #
+        # 6. Hugging Face labeling of representatives
+        # ------------------------------------------------------------------ #
+        checkpoint("Labeling frames", "Generating descriptions via Hugging Face")
+        labeled_reps = label_reps(representatives, run_dir)
+        checkpoint("Labeling complete", f"Labeled {len(labeled_reps)} frames")
 
-    # ------------------------------------------------------------------ #
-    # 7. clip generation centred on reps
-    # ------------------------------------------------------------------ #
-    clips = clipper(
-    frames=frames,
-    clusters=clusters,
-    video_path=video_path,
-    run_dir=run_dir,
-    )
+        # ------------------------------------------------------------------ #
+        # 7. clip generation centred on reps
+        # ------------------------------------------------------------------ #
+        checkpoint("Generating clips", "Creating video clips around representatives")
+        clips = clipper(
+            frames=frames,
+            clusters=clusters,
+            video_path=video_path,
+            run_dir=run_dir,
+        )
+        checkpoint("Clip generation complete", f"Generated {len(clips)} clips")
 
-    # ------------------------------------------------------------------ #
-    # 8. write consolidated metadata
-    # ------------------------------------------------------------------ #
-    write_meta(
-        run_dir,
-        video_props=dataclasses.asdict(props),
-        frame_rate=config.FRAME_RATE,
-        embedding_model="openai/clip-vit-base-patch32",
-        representatives=labeled_reps,  # includes labels
-        clips=clips,
-    )
+        # ------------------------------------------------------------------ #
+        # 8. write consolidated metadata
+        # ------------------------------------------------------------------ #
+        checkpoint("Writing metadata", "Creating final output files")
+        write_meta(
+            run_dir,
+            video_props=dataclasses.asdict(props),
+            frame_rate=config.FRAME_RATE,
+            embedding_model="openai/clip-vit-base-patch32",
+            representatives=labeled_reps,  # includes labels
+            clips=clips,
+        )
+        checkpoint("Pipeline complete", "All processing finished successfully")
 
-    return run_dir
+        return run_dir
+        
+    except Exception as e:
+        error_msg = f"Pipeline failed: {str(e)}"
+        logger.error(error_msg)
+        checkpoint("Pipeline failed", error_msg)
+        raise
