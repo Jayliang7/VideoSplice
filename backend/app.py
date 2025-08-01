@@ -117,7 +117,15 @@ async def upload_video(background_tasks: BackgroundTasks, file: UploadFile = Fil
     JOBS[job_id] = {"state": "processing", "run_dir": None, "error": None}
     background_tasks.add_task(_process_video, job_id, temp_path)
 
-    return {"job_id": job_id}
+    # Add explicit CORS headers
+    from fastapi.responses import JSONResponse
+    response_data = {"job_id": job_id}
+    response = JSONResponse(content=response_data)
+    response.headers["Access-Control-Allow-Origin"] = "*"
+    response.headers["Access-Control-Allow-Methods"] = "GET, POST, PUT, DELETE, OPTIONS"
+    response.headers["Access-Control-Allow-Headers"] = "*"
+    
+    return response
 
 
 @app.get("/api/status/{job_id}")
@@ -181,8 +189,74 @@ def download_zip(job_id: str):
                 zf.write(fp, fp.relative_to(run_dir))
     buffer.seek(0)
 
-    headers = {"Content-Disposition": f"attachment; filename={job_id}.zip"}
+    headers = {
+        "Content-Disposition": f"attachment; filename={job_id}.zip",
+        "Access-Control-Allow-Origin": "*",
+        "Access-Control-Allow-Methods": "GET, POST, PUT, DELETE, OPTIONS",
+        "Access-Control-Allow-Headers": "*"
+    }
     return StreamingResponse(buffer, media_type="application/zip", headers=headers)
+
+
+@app.post("/api/process", response_model=dict[str, str])
+async def process_video_sync(file: UploadFile = File(...)):
+    """Process video synchronously and return download URL when complete."""
+    
+    logger.info(f"Received sync processing request for file: {file.filename}")
+    
+    job_id = str(uuid4())
+    temp_path = UPLOAD_DIR / f"{job_id}_{file.filename}"
+
+    try:
+        # Stream upload to disk
+        with temp_path.open("wb") as out:
+            shutil.copyfileobj(file.file, out)
+
+        logger.info(f"File saved to {temp_path}, job_id: {job_id}")
+        
+        # Process video synchronously
+        from backend.video_pipeline.pipeline import run
+        
+        logger.info(f"Starting synchronous video processing for job {job_id}")
+        run_dir = run(temp_path, prefix=job_id)
+        
+        logger.info(f"Video processing completed for job {job_id}, run_dir: {run_dir}")
+        
+        # Return success with download URL
+        download_url = f"/api/download/{job_id}"
+        response_data = {
+            "status": "success", 
+            "job_id": job_id,
+            "download_url": download_url,
+            "message": "Video processed successfully"
+        }
+        
+        # Add explicit CORS headers
+        from fastapi.responses import JSONResponse
+        response = JSONResponse(content=response_data)
+        response.headers["Access-Control-Allow-Origin"] = "*"
+        response.headers["Access-Control-Allow-Methods"] = "GET, POST, PUT, DELETE, OPTIONS"
+        response.headers["Access-Control-Allow-Headers"] = "*"
+        
+        return response
+        
+    except Exception as exc:
+        logger.error(f"Video processing failed for job {job_id}: {str(exc)}")
+        response_data = {
+            "status": "error",
+            "job_id": job_id,
+            "error": str(exc),
+            "message": "Video processing failed"
+        }
+        
+        # Add explicit CORS headers
+        from fastapi.responses import JSONResponse
+        response = JSONResponse(content=response_data)
+        response.headers["Access-Control-Allow-Origin"] = "*"
+        response.headers["Access-Control-Allow-Methods"] = "GET, POST, PUT, DELETE, OPTIONS"
+        response.headers["Access-Control-Allow-Headers"] = "*"
+        
+        return response
 
 
 # ---------------------------------------------------------------------------

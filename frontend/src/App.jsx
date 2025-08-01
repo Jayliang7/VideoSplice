@@ -22,95 +22,46 @@ export default function App() {
   const handleSubmit = async () => {
     if (!files.length || status === "uploading") return;
     setStatus("uploading");
-    setMessage("Uploading...");
+    setMessage("Uploading and processing video... This may take a few minutes.");
 
     try {
       const form = new FormData();
       form.append("file", files[0]);
 
-      const res = await fetch(`${API_BASE}/api/upload`, {
+      const res = await fetch(`${API_BASE}/api/process`, {
         method: "POST",
         body: form,
       });
 
       if (!res.ok) throw new Error("Upload failed");
       const data = await res.json();
-      setJobId(data.job_id);
-      setStatus("processing");
-      setMessage("Upload successful. Processing…");
+      
+      if (data.status === "success") {
+        setStatus("success");
+        setMessage("Processing complete! Downloading...");
+        
+        // Trigger download
+        const downloadUrl = `${API_BASE}${data.download_url}`;
+        const anchor = document.createElement("a");
+        anchor.href = downloadUrl;
+        anchor.download = `${data.job_id}.zip`;
+        anchor.style.display = "none";
+        document.body.appendChild(anchor);
+        anchor.click();
+        document.body.removeChild(anchor);
+        
+        setMessage("Download started! Check your downloads folder.");
+      } else {
+        setStatus("error");
+        setMessage(`Processing failed: ${data.error || data.message}`);
+      }
+      
     } catch (err) {
       console.error(err);
       setStatus("error");
       setMessage("Upload failed — see console.");
     }
   };
-
-  useEffect(() => {
-    if (!jobId || status !== "processing") return;
-    
-    let consecutiveErrors = 0;
-    const maxConsecutiveErrors = 5; // Allow up to 5 consecutive errors before giving up
-    
-    const interval = setInterval(async () => {
-      try {
-        const res = await fetch(`${API_BASE}/api/status/${jobId}`, {
-          method: 'GET',
-          headers: {
-            'Accept': 'application/json',
-          },
-        });
-        
-        if (!res.ok) {
-          consecutiveErrors++;
-          console.warn(`Status check failed (attempt ${consecutiveErrors}/${maxConsecutiveErrors}): ${res.status} ${res.statusText}`);
-          
-          if (consecutiveErrors >= maxConsecutiveErrors) {
-            throw new Error(`Status check failed after ${maxConsecutiveErrors} attempts`);
-          }
-          return; // Continue polling on next interval
-        }
-        
-        // Reset error counter on success
-        consecutiveErrors = 0;
-        const data = await res.json();
-
-        if (data.state === "done") {
-          setStatus("success");
-          setMessage("Processing complete! Downloading...");
-
-          const downloadUrl = `${API_BASE}/api/download/${jobId}`;
-          const anchor = document.createElement("a");
-          anchor.href = downloadUrl;
-          anchor.download = `${jobId}.zip`;
-          anchor.style.display = "none";
-          document.body.appendChild(anchor);
-          anchor.click();
-          document.body.removeChild(anchor);
-
-          clearInterval(interval);
-        } else if (data.state === "error") {
-          setStatus("error");
-          setMessage("Processing failed.");
-          clearInterval(interval);
-        } else {
-          // Still processing, update message with progress
-          setMessage(`Processing... (${data.state})`);
-        }
-      } catch (err) {
-        consecutiveErrors++;
-        console.error(`Status check error (attempt ${consecutiveErrors}/${maxConsecutiveErrors}):`, err);
-        
-        if (consecutiveErrors >= maxConsecutiveErrors) {
-          setStatus("error");
-          setMessage("Could not check status after multiple attempts. Please refresh and try again.");
-          clearInterval(interval);
-        }
-        // Continue polling on next interval if under max errors
-      }
-    }, 3000); // Increased to 3 seconds to reduce load
-    
-    return () => clearInterval(interval);
-  }, [jobId, status]);
 
   const statusColor = {
     success: "text-green-400",
