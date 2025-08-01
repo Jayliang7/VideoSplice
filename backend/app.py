@@ -54,6 +54,10 @@ UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
 # Endpoints
 # ---------------------------------------------------------------------------
 
+@app.get("/", include_in_schema=False)
+def root():
+    return {"status": "ok"}
+
 @app.post("/api/upload", response_model=dict[str, str])
 async def upload_video(background_tasks: BackgroundTasks, file: UploadFile = File(...)):
     """Receive a video file and kick off pipeline processing in background."""
