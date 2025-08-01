@@ -19,7 +19,7 @@ from PIL import Image
 from tqdm import tqdm
 import numpy as np
 
-from video_pipeline import config
+from backend.video_pipeline import config
 
 # --------------------------------------------------------------------------- #
 # 🔄  Load model once (cold-start cost amortised)

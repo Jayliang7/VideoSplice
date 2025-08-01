@@ -18,8 +18,8 @@ import numpy as np
 from pathlib import Path
 from typing import List, Dict
 
-from video_pipeline import config
-from video_pipeline.video_io import get_video_props
+from backend.video_pipeline import config
+from backend.video_pipeline.video_io import get_video_props
 
 # --------------------------------------------------------------------------- #
 # Public API

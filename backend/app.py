@@ -119,7 +119,7 @@ def download_zip(job_id: str):
 def _process_video(job_id: str, video_path: Path):
     """Run the heavy pipeline in the background thread."""
 
-    from video_pipeline.pipeline import run  # local import to avoid startup cost
+    from backend.video_pipeline.pipeline import run  # local import to avoid startup cost
 
     try:
         # use job_id as a prefix so each run dir is unique and traceable

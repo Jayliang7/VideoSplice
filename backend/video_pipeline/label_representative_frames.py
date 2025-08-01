@@ -11,7 +11,7 @@ import base64, json
 from pathlib import Path
 from typing import List, Dict
 from openai import OpenAI
-from video_pipeline import config
+from backend.video_pipeline import config
 
 # -------------------------------------------------- #
 # Client initialisation
