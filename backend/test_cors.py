@@ -3,10 +3,11 @@
 
 import requests
 import json
+import os
 
 def test_cors_headers():
     """Test that CORS headers are present in responses."""
-    base_url = "http://localhost:8000"
+    base_url = os.getenv("BACKEND_URL", "https://videosplice.onrender.com")
     
     # Test OPTIONS request (preflight)
     try:
@@ -39,7 +40,7 @@ def test_cors_headers():
 
 def test_actual_request():
     """Test actual GET request with CORS headers."""
-    base_url = "http://localhost:8000"
+    base_url = os.getenv("BACKEND_URL", "https://videosplice.onrender.com")
     
     try:
         response = requests.get(f"{base_url}/health")
@@ -60,19 +61,15 @@ def test_actual_request():
 
 if __name__ == "__main__":
     print("Testing CORS configuration...")
+    print("--- CORS Headers Test ---")
+    cors_result = test_cors_headers()
     
-    tests = [
-        ("CORS Headers Test", test_cors_headers),
-        ("GET Request Test", test_actual_request),
-    ]
+    print("\n--- GET Request Test ---")
+    get_result = test_actual_request()
     
-    passed = 0
-    for name, test_func in tests:
-        print(f"\n--- {name} ---")
-        if test_func():
-            passed += 1
-            print(f"✅ {name} PASSED")
-        else:
-            print(f"❌ {name} FAILED")
+    print(f"\nResults: {sum([cors_result, get_result])}/2 tests passed")
     
-    print(f"\nResults: {passed}/{len(tests)} tests passed") 
+    if cors_result and get_result:
+        print("✅ CORS configuration is working correctly!")
+    else:
+        print("❌ CORS configuration has issues") 

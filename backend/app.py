@@ -42,17 +42,28 @@ origins = [
     "https://videosplice.onrender.com",       # your API URL
     "http://localhost:5173",                  # local development
     "http://localhost:3000",                  # alternative local dev port
+    "http://localhost:8000",                  # local backend
+    "*",  # Allow all origins for debugging - remove in production
 ]
 
+# Add CORS middleware with more explicit configuration
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=origins,        # exact origins
+    allow_origins=origins,
     allow_credentials=True,
     allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],
     allow_headers=["*"],
     expose_headers=["Content-Disposition"],
     max_age=86400,  # Cache preflight requests for 24 hours
 )
+
+# Add a simple middleware to log requests for debugging
+@app.middleware("http")
+async def log_requests(request, call_next):
+    logger.info(f"Request: {request.method} {request.url}")
+    response = await call_next(request)
+    logger.info(f"Response: {response.status_code}")
+    return response
 
 # ---------------------------------------------------------------------------
 # Crude in‑memory job registry: {job_id: {state, run_dir, error}}
@@ -75,7 +86,13 @@ def root():
 @app.get("/health", include_in_schema=False)
 def health_check():
     """Health check endpoint for Render."""
-    return {"status": "healthy", "jobs_count": len(JOBS)}
+    from fastapi.responses import JSONResponse
+    response_data = {"status": "healthy", "jobs_count": len(JOBS)}
+    response = JSONResponse(content=response_data)
+    response.headers["Access-Control-Allow-Origin"] = "*"
+    response.headers["Access-Control-Allow-Methods"] = "GET, POST, PUT, DELETE, OPTIONS"
+    response.headers["Access-Control-Allow-Headers"] = "*"
+    return response
 
 @app.options("/api/status/{job_id}")
 def status_options(job_id: str):
@@ -120,7 +137,21 @@ def get_status(job_id: str):
         if get_status._request_count[job_id] % 10 == 0:
             logger.info(f"Job {job_id} state: {job['state']} (request #{get_status._request_count[job_id]})")
         
-        return {"state": job["state"], "error": job["error"]}
+        # Add more detailed error information
+        response_data = {"state": job["state"]}
+        if job.get("error"):
+            response_data["error"] = job["error"]
+        if job.get("progress"):
+            response_data["progress"] = job["progress"]
+        
+        # Add explicit CORS headers
+        from fastapi.responses import JSONResponse
+        response = JSONResponse(content=response_data)
+        response.headers["Access-Control-Allow-Origin"] = "*"
+        response.headers["Access-Control-Allow-Methods"] = "GET, POST, PUT, DELETE, OPTIONS"
+        response.headers["Access-Control-Allow-Headers"] = "*"
+        
+        return response
     except HTTPException:
         # Re-raise HTTP exceptions as-is
         raise
@@ -175,14 +206,20 @@ def _process_video(job_id: str, video_path: Path):
         
         logger.info(f"Video file size: {file_size} bytes")
         
+        # Update job with progress
+        JOBS[job_id].update(progress="Initializing pipeline...")
+        
         from backend.video_pipeline.pipeline import run  # local import to avoid startup cost
 
         # use job_id as a prefix so each run dir is unique and traceable
+        JOBS[job_id].update(progress="Running video analysis...")
         run_dir = run(video_path, prefix=job_id)
-        JOBS[job_id].update(state="done", run_dir=run_dir)
+        
+        JOBS[job_id].update(state="done", run_dir=run_dir, progress="Processing complete")
         logger.info(f"Video processing completed for job {job_id}, run_dir: {run_dir}")
         
     except Exception as exc:  # pragma: no cover – broad for MVP
-        logger.error(f"Video processing failed for job {job_id}: {str(exc)}")
-        JOBS[job_id].update(state="error", error=str(exc))
+        error_msg = f"Video processing failed for job {job_id}: {str(exc)}"
+        logger.error(error_msg)
+        JOBS[job_id].update(state="error", error=str(exc), progress="Processing failed")
         # Don't re-raise to prevent the background task from failing
