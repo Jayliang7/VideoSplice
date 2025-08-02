@@ -205,7 +205,7 @@ async def process_video_sync(file: UploadFile = File(...)):
     logger.info(f"Received sync processing request for file: {file.filename}")
     
     # Check memory before starting
-    from backend.video_pipeline.config import check_memory_limit, check_video_size, assert_memory_available, get_memory_usage
+    from backend.video_pipeline.config import check_memory_limit, check_video_size, assert_memory_available, get_memory_usage, IS_RENDER
     
     memory_info = get_memory_usage()
     if memory_info["available"]:
@@ -226,8 +226,8 @@ async def process_video_sync(file: UploadFile = File(...)):
         
         logger.info(f"File saved to {temp_path}, job_id: {job_id}, size: {file_size / (1024*1024):.1f}MB")
         
-        # Check memory before processing
-        if not check_memory_limit():
+        # Check memory before processing (skip on Render)
+        if not IS_RENDER and not check_memory_limit():
             raise HTTPException(503, detail="Server memory limit reached. Please try again later or use a smaller video.")
         
         # Create job entry for tracking
@@ -239,8 +239,8 @@ async def process_video_sync(file: UploadFile = File(...)):
             JOBS[job_id].update(progress=progress_text)
             logger.info(f"Job {job_id} progress: {progress_text}")
             
-            # Check memory during processing
-            if not check_memory_limit():
+            # Check memory during processing (skip on Render)
+            if not IS_RENDER and not check_memory_limit():
                 raise MemoryLimitExceededError(get_memory_usage()["used_mb"], 450)
         
         # Process video synchronously with progress tracking
@@ -249,8 +249,9 @@ async def process_video_sync(file: UploadFile = File(...)):
         logger.info(f"Starting synchronous video processing for job {job_id}")
         progress_callback("Initializing", "Starting video processing pipeline")
         
-        # Assert memory is available before starting
-        assert_memory_available()
+        # Assert memory is available before starting (skip on Render)
+        if not IS_RENDER:
+            assert_memory_available()
         
         run_dir = run(temp_path, prefix=job_id, progress_callback=progress_callback)
         

@@ -63,7 +63,11 @@ def run(video_path: str | Path, *, prefix: str | None = None, progress_callback=
     
     def check_memory():
         """Check memory and force cleanup if needed"""
-        from backend.video_pipeline.config import check_memory_limit, force_memory_cleanup, get_memory_usage
+        from backend.video_pipeline.config import check_memory_limit, force_memory_cleanup, get_memory_usage, IS_RENDER
+        
+        # Skip memory checks on Render due to reporting issues
+        if IS_RENDER:
+            return True
         
         memory_info = get_memory_usage()
         if memory_info["available"]:

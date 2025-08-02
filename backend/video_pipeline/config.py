@@ -74,11 +74,18 @@ EMBEDDING_MODEL: str = "openai/clip-vit-base-patch32"
 # 🛠️  MEMORY MONITORING AND OPTIMIZATION
 # --------------------------------------------------------------------------- #
 
+# Check if we're on Render and disable memory monitoring
+IS_RENDER = os.getenv("RENDER", "false").lower() == "true"
+
 try:
     import psutil
-    PSUTIL_AVAILABLE = True
+    PSUTIL_AVAILABLE = True and not IS_RENDER  # Disable on Render
 except ImportError:
     PSUTIL_AVAILABLE = False
+
+if IS_RENDER:
+    logger.warning("Running on Render - memory monitoring disabled due to container reporting issues")
+elif not PSUTIL_AVAILABLE:
     logger.warning("psutil not available - memory monitoring disabled")
 
 def get_memory_usage() -> dict:
@@ -88,11 +95,19 @@ def get_memory_usage() -> dict:
     
     try:
         memory = psutil.virtual_memory()
+        used_mb = memory.used / (1024 * 1024)
+        total_mb = memory.total / (1024 * 1024)
+        
+        # Sanity check for impossibly high values (common on Render)
+        if used_mb > 10000 or total_mb > 10000:
+            logger.warning(f"Memory reporting error detected: {used_mb:.1f}MB used, {total_mb:.1f}MB total")
+            return {"available": False, "percent": 0, "used_mb": 0, "total_mb": 0}
+        
         return {
             "available": True,
             "percent": memory.percent,
-            "used_mb": memory.used / (1024 * 1024),
-            "total_mb": memory.total / (1024 * 1024),
+            "used_mb": used_mb,
+            "total_mb": total_mb,
             "available_mb": memory.available / (1024 * 1024)
         }
     except Exception as e:

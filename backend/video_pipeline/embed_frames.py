@@ -55,7 +55,7 @@ def run(frames: List[Dict], run_dir: Path) -> List[Dict]:
         enriched: List[Dict] = []
         
         # Import memory monitoring
-        from backend.video_pipeline.config import BATCH_SIZE, check_memory_limit, force_memory_cleanup, get_memory_usage
+        from backend.video_pipeline.config import BATCH_SIZE, check_memory_limit, force_memory_cleanup, get_memory_usage, IS_RENDER
         
         # Process frames in batches for memory efficiency
         for batch_start in range(0, len(frames), BATCH_SIZE):
@@ -64,14 +64,15 @@ def run(frames: List[Dict], run_dir: Path) -> List[Dict]:
             
             logger.info(f"Processing batch {batch_start//BATCH_SIZE + 1}/{(len(frames) + BATCH_SIZE - 1)//BATCH_SIZE} (frames {batch_start+1}-{batch_end})")
             
-            # Check memory before processing batch
-            memory_info = get_memory_usage()
-            if memory_info["available"]:
-                logger.info(f"Memory before batch: {memory_info['used_mb']:.1f}MB ({memory_info['percent']:.1f}%)")
-            
-            if not check_memory_limit():
-                logger.warning("Memory usage high before batch, forcing cleanup...")
-                force_memory_cleanup()
+            # Check memory before processing batch (skip on Render)
+            if not IS_RENDER:
+                memory_info = get_memory_usage()
+                if memory_info["available"]:
+                    logger.info(f"Memory before batch: {memory_info['used_mb']:.1f}MB ({memory_info['percent']:.1f}%)")
+                
+                if not check_memory_limit():
+                    logger.warning("Memory usage high before batch, forcing cleanup...")
+                    force_memory_cleanup()
             
             # Process batch
             for i, meta in enumerate(batch_frames):
@@ -106,10 +107,11 @@ def run(frames: List[Dict], run_dir: Path) -> List[Dict]:
                     logger.error(f"Failed to embed frame {batch_start + i} ({meta.get('path', 'unknown')}): {str(e)}")
                     raise
             
-            # Check memory after batch
-            memory_info = get_memory_usage()
-            if memory_info["available"]:
-                logger.info(f"Memory after batch: {memory_info['used_mb']:.1f}MB ({memory_info['percent']:.1f}%)")
+            # Check memory after batch (skip on Render)
+            if not IS_RENDER:
+                memory_info = get_memory_usage()
+                if memory_info["available"]:
+                    logger.info(f"Memory after batch: {memory_info['used_mb']:.1f}MB ({memory_info['percent']:.1f}%)")
             
             # Force cleanup after each batch
             force_memory_cleanup()
