@@ -99,6 +99,21 @@ def status_options(job_id: str):
     """Handle OPTIONS requests for CORS preflight."""
     return {"message": "OK"}
 
+@app.options("/api/process")
+def process_options():
+    """Handle OPTIONS requests for CORS preflight."""
+    return {"message": "OK"}
+
+@app.options("/api/upload")
+def upload_options():
+    """Handle OPTIONS requests for CORS preflight."""
+    return {"message": "OK"}
+
+@app.options("/api/download/{job_id}")
+def download_options(job_id: str):
+    """Handle OPTIONS requests for CORS preflight."""
+    return {"message": "OK"}
+
 @app.post("/api/upload", response_model=dict[str, str])
 async def upload_video(background_tasks: BackgroundTasks, file: UploadFile = File(...)):
     """Receive a video file and kick off pipeline processing in background."""
