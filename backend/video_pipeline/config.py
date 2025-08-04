@@ -41,7 +41,7 @@ CLIPS_SUBDIR = "clips"
 # --------------------------------------------------------------------------- #
 
 #: Maximum memory usage allowed (Render free plan: 512MB)
-MAX_MEMORY_MB = 450  # Leave 62MB buffer for safety
+MAX_MEMORY_MB = 2000  # Leave 62MB buffer for safety
 MAX_MEMORY_BYTES = MAX_MEMORY_MB * 1024 * 1024
 
 #: Memory warning threshold (80% of max)
@@ -49,7 +49,7 @@ MEMORY_WARNING_THRESHOLD = 0.8
 MEMORY_CRITICAL_THRESHOLD = 0.9
 
 #: Maximum video file size (50MB to leave room for processing)
-MAX_VIDEO_SIZE_MB = 50
+MAX_VIDEO_SIZE_MB = 500
 MAX_VIDEO_SIZE_BYTES = MAX_VIDEO_SIZE_MB * 1024 * 1024
 
 #: Batch processing size for memory efficiency
